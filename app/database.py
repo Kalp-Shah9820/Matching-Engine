@@ -5,7 +5,7 @@ from app.schemas import Base
 
 # Reads from environment variable set in docker-compose.yml.
 # Falls back to local SQLite for running without Docker.
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./matching.db") 
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./matching.db")
 
 # SQLite needs check_same_thread=False; PostgreSQL ignores this arg safely
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}

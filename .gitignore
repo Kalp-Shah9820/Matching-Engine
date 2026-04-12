@@ -1,0 +1,79 @@
+# Python - Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+.env.*.local
+
+# Python - Build & Cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Python - Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Frontend - Node
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/out/
+frontend/.env.local
+frontend/.env.*.local
+
+# Database files (local dev only)
+*.db
+*.sqlite
+*.sqlite3
+matching.db
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Git
+.git/
+
+# Docker (don't commit docker images)
+.dockerignore
+Dockerfile
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.turbo/
+.cache/
+*.swp
+*.bak
