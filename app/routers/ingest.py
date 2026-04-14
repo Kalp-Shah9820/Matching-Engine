@@ -45,56 +45,133 @@ def _safe_float(value) -> float | None:
 
 
 def _extract_text_from_docx(contents: bytes) -> str:
+    """Extracts text from DOCX while preserving line breaks and basic structure."""
     document = docx.Document(io.BytesIO(contents))
-    return "\n".join([para.text for para in document.paragraphs if para.text.strip()])
+    # Preserve paragraph structure and handle table text if any
+    full_text = []
+    for para in document.paragraphs:
+        if para.text.strip():
+            full_text.append(para.text.strip())
+    
+    # Also extract from tables (often JDs use tables)
+    for table in document.tables:
+        for row in table.rows:
+            row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+            if row_text:
+                full_text.append(row_text)
+                
+    return "\n".join(full_text)
 
 
 def _extract_text_from_pdf(contents: bytes) -> str:
+    """Extracts text from PDF using pdfplumber with improved layout preservation."""
     text = []
-    with pdfplumber.open(io.BytesIO(contents)) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text() or ""
-            text.append(page_text)
+    try:
+        with pdfplumber.open(io.BytesIO(contents)) as pdf:
+            for page in pdf.pages:
+                # Use layout=True to maintain columns and alignments
+                page_text = page.extract_text(x_tolerance=3, y_tolerance=3) or ""
+                text.append(page_text)
+    except Exception as e:
+        print(f"PDF Extraction Error: {e}")
+        return ""
     return "\n".join(text)
 
 
 def _extract_section(text: str, keywords: list[str]) -> str | None:
-    lower_text = text.lower()
-    for keyword in keywords:
-        idx = lower_text.find(keyword)
-        if idx != -1:
-            snippet = text[idx + len(keyword):].strip()
-            if snippet.startswith(':'):
-                snippet = snippet[1:].strip()
-            if not snippet:
+    """
+    Smarter section extraction. 
+    Finds a keyword and captures text until the next major heading or multiple line breaks.
+    """
+    lines = text.splitlines()
+    lower_keywords = [k.lower() for k in keywords]
+    
+    start_idx = -1
+    found_line_num = -1
+    
+    for i, line in enumerate(lines):
+        clean_line = line.strip().lower()
+        if any(k in clean_line for k in lower_keywords):
+            # Check if this line is a heading (usually short)
+            if len(clean_line) < 50:
+                start_idx = i
+                found_line_num = i
+                break
+                
+    if start_idx == -1: return None
+    
+    section_content = []
+    # Start collecting from the line AFTER the heading or the same line if it has content
+    first_line_content = lines[start_idx].strip()
+    # If the heading line has a colon, take what's after it
+    if ':' in first_line_content:
+        after_colon = first_line_content.split(':', 1)[1].strip()
+        if after_colon:
+            section_content.append(after_colon)
+    
+    # Look for the end of the section
+    for i in range(start_idx + 1, len(lines)):
+        line = lines[i].strip()
+        if not line:
+            # Allow up to 2 empty lines before assuming section change
+            if i + 1 < len(lines) and lines[i+1].strip():
                 continue
-            section = snippet.split('\n\n')[0].strip()
-            if section:
-                return section
-    return None
+            else:
+                if len(section_content) > 3: # If we have some content, a break might mean end
+                    break
+                continue
+        
+        # Heuristic: If we hit another line that looks like a heading, stop
+        # A heading is usually short, all caps, or ends in a colon
+        if (line.isupper() and len(line) < 40) or (line.endswith(':') and len(line) < 30):
+            break
+            
+        section_content.append(line)
+        
+        # Stop if we hit common 'next' section keywords
+        lower_line = line.lower()
+        if any(stop in lower_line for stop in ['responsibilities', 'qualifications', 'requirements', 'about us']):
+            if len(line) < 30: # Only if it looks like a header
+                section_content.pop() # Remove the next header
+                break
+                
+    return "\n".join(section_content).strip() or None
 
 
 def _parse_job_text(text: str) -> tuple[str, str, str | None, str | None]:
+    """Robustly parses JD text into structured components."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    
+    # 1. Improved Title Detection
     title = 'Job Description'
-
     if lines:
-        first_line = lines[0]
-        title_match = re.match(
-            r'^(?:Job\s+Title|Position|Role|Opening|Vacancy|Job\s+Description|JD)\s*[:\-]\s*(.+)$',
-            first_line,
-            re.IGNORECASE,
-        )
-        title = title_match.group(1).strip() if title_match else first_line
+        for i in range(min(5, len(lines))):
+            line = lines[i]
+            # Match explicit title labels
+            title_match = re.search(
+                r'(?:Job\s+Title|Position|Role|Opening|Vacancy)\s*[:\-]\s*(.+)',
+                line, re.IGNORECASE
+            )
+            if title_match:
+                title = title_match.group(1).strip()
+                break
+            # Fallback: Treat first line as title if it's short and no label found
+            if i == 0 and len(line) < 60 and not line.endswith('.'):
+                title = line
+                break
 
-    overview = _extract_section(text, ['overview', 'job summary', 'about the role', 'job purpose', 'role summary'])
-    if not overview:
-        overview = "\n".join(lines[1:4]) if len(lines) > 1 else ''
+    # 2. Extract Sections with prioritized keywords
+    overview = _extract_section(text, ['overview', 'job summary', 'about the role', 'company overview', 'introduction'])
+    if not overview and len(lines) > 2:
+        # Fallback for overview: take first few non-title lines
+        overview = "\n".join(lines[1:4])
 
-    required_skills = _extract_section(text, ['required skills', 'skills required', 'skill set', 'skills:', 'must have', 'preferred skills'])
-    core_requirements = _extract_section(text, ['core requirements', 'requirements', 'responsibilities', 'what you will do', 'job responsibilities'])
+    skills = _extract_section(text, ['required skills', 'technical skills', 'skills set', 'must-have', 'key skills', 'competencies'])
+    
+    # Requirements usually include things like responsibilities and qualifications
+    requirements = _extract_section(text, ['requirements', 'qualifications', 'what you will do', 'responsibilities', 'expectations'])
 
-    return title, overview, core_requirements, required_skills
+    return title, overview or "", requirements, skills
 
 
 def _parse_multiple_jobs(text: str) -> list[tuple[str, str, str | None, str | None]]:
