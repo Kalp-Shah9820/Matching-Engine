@@ -1,6 +1,5 @@
-import type { NextConfig } from 'next';
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   rewrites: async () => {
     return {
       beforeFiles: [
@@ -9,8 +8,10 @@ const nextConfig: NextConfig = {
           destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/:path*`,
         },
       ],
+      afterFiles: [],
+      fallback: [],
     };
   },
 };
 
-export default nextConfig;
+module.exports = nextConfig;

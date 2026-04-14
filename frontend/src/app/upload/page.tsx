@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { uploadCandidatesExcel, addJobsBulk } from '@/lib/api';
-import { UploadResponse } from '@/types';
+import { useState, useRef, useEffect } from 'react';
+import { uploadCandidatesExcel, addJobsBulk, uploadJobDescriptionFile, listJobs, deleteJob } from '@/lib/api';
 import { Upload, FileSpreadsheet, Plus, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 import clsx from 'clsx';
+import { JobDescription } from '@/types';
 
 interface JobFormData {
   id: string;
@@ -37,8 +37,19 @@ export default function UploadPage() {
   ]);
 
   const [jobLoading, setJobLoading] = useState(false);
+  const [jobFile, setJobFile] = useState<File | null>(null);
+  const [jobFileStatus, setJobFileStatus] = useState<{
+    type: 'success' | 'error' | null;
+    message: string;
+  }>({ type: null, message: '' });
+  const [jobFileLoading, setJobFileLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jobFileInputRef = useRef<HTMLInputElement>(null);
   const dragZoneRef = useRef<HTMLDivElement>(null);
+
+  // Jobs list state
+  const [jobs, setJobs] = useState<JobDescription[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
 
   // Candidate upload handlers
   const handleDragOver = (e: React.DragEvent) => {
@@ -71,6 +82,32 @@ export default function UploadPage() {
     if (file) {
       setCandidateFile(file);
       setCandidateStatus({ type: null, message: '' });
+    }
+  };
+
+  const handleJobFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.currentTarget.files?.[0];
+    if (file) {
+      setJobFile(file);
+      setJobFileStatus({ type: null, message: '' });
+    }
+  };
+
+  const handleUploadJobFile = async () => {
+    if (!jobFile) return;
+
+    setJobFileLoading(true);
+    try {
+      const result = await uploadJobDescriptionFile(jobFile);
+      setJobFileStatus({ type: 'success', message: result.message });
+      setJobFile(null);
+      if (jobFileInputRef.current) jobFileInputRef.current.value = '';
+      // Reload jobs list
+      loadJobs();
+    } catch (error) {
+      setJobFileStatus({ type: 'error', message: error instanceof Error ? error.message : 'Upload failed' });
+    } finally {
+      setJobFileLoading(false);
     }
   };
 
@@ -137,7 +174,7 @@ export default function UploadPage() {
     try {
       const result = await addJobsBulk({
         job_descriptions: validForms.map((form) => ({
-          title: form.title || undefined,
+          title: form.title,
           company: form.company || undefined,
           location: form.location || undefined,
           required_skills: form.required_skills || undefined,
@@ -160,12 +197,46 @@ export default function UploadPage() {
           overview: '',
         },
       ]);
+      // Reload jobs list
+      loadJobs();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to save jobs');
     } finally {
       setJobLoading(false);
     }
   };
+
+  // Load jobs list
+  const loadJobs = async () => {
+    setJobsLoading(true);
+    try {
+      const jobsList = await listJobs();
+      setJobs(jobsList);
+    } catch (error) {
+      console.error('Failed to load jobs:', error);
+    } finally {
+      setJobsLoading(false);
+    }
+  };
+
+  // Delete job
+  const handleDeleteJob = async (jdId: string, title: string) => {
+    if (!confirm(`Are you sure you want to delete the job "${title}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteJob(jdId);
+      await loadJobs();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to delete job');
+    }
+  };
+
+  // Load jobs on component mount
+  useEffect(() => {
+    loadJobs();
+  }, []);
 
   return (
     <main className="pt-20 pb-24">
@@ -284,6 +355,17 @@ export default function UploadPage() {
             >
               {candidateLoading ? 'UPLOADING...' : 'UPLOAD CANDIDATES'}
             </button>
+
+            <div className="mt-3 text-xs text-[var(--dim)] font-mono">
+              Need a template? Download a sample Excel file to get started.
+            </div>
+            <a
+              href="/Sample_Candidate_Data.xlsx"
+              download
+              className="inline-flex items-center justify-center mt-2 px-3 py-2 rounded bg-white/5 border border-[var(--wire)] text-[var(--light)] text-xs font-mono tracking-widest hover:bg-amber-400/10 hover:border-amber-400/40 transition-all"
+            >
+              Download sample Excel
+            </a>
           </div>
 
           {/* Column B - Job Forms */}
@@ -292,9 +374,80 @@ export default function UploadPage() {
               <div className="w-7 h-7 rounded-full border border-amber-400 flex items-center justify-center font-display text-amber-400">
                 B
               </div>
-              <h2 className="font-display text-2xl text-[var(--snow)]">
-                JOB DESCRIPTIONS
-              </h2>
+              <div>
+                <h2 className="font-display text-2xl text-[var(--snow)]">
+                  JOB DESCRIPTIONS
+                </h2>
+                <p className="text-xs text-[var(--dim)] mt-1">
+                  Upload a Word / PDF job description or enter it manually below.
+                </p>
+              </div>
+            </div>
+
+            <div className="border border-[var(--edge)] rounded p-4 mb-6 bg-[var(--panel)]">
+              <label className="block font-mono text-[10px] text-[var(--dim)] tracking-wider mb-2">
+                UPLOAD JOB DOC (Word or PDF)
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  ref={jobFileInputRef}
+                  type="file"
+                  accept=".docx,.pdf"
+                  onChange={handleJobFileSelect}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => jobFileInputRef.current?.click()}
+                  className="px-3 py-2 rounded bg-white/5 border border-[var(--wire)] text-[var(--light)] text-xs font-mono tracking-widest hover:bg-amber-400/10 hover:border-amber-400/40 transition-all"
+                >
+                  Select file
+                </button>
+                <span className="text-[var(--muted)] text-xs font-mono">
+                  {jobFile ? jobFile.name : 'No file selected'}
+                </span>
+              </div>
+
+              {jobFileStatus.type && (
+                <div
+                  className={clsx(
+                    'mt-4 p-3 rounded border flex items-start gap-2',
+                    jobFileStatus.type === 'success'
+                      ? 'bg-teal-400/10 border-teal-400/25'
+                      : 'bg-rose-400/10 border-rose-400/25'
+                  )}
+                >
+                  {jobFileStatus.type === 'success' ? (
+                    <CheckCircle size={18} className="text-teal-400 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle size={18} className="text-rose-400 flex-shrink-0 mt-0.5" />
+                  )}
+                  <p
+                    className={clsx(
+                      'text-sm',
+                      jobFileStatus.type === 'success'
+                        ? 'text-teal-400'
+                        : 'text-rose-400'
+                    )}
+                  >
+                    {jobFileStatus.message}
+                  </p>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleUploadJobFile}
+                disabled={!jobFile || jobFileLoading}
+                className={clsx(
+                  'mt-4 px-4 py-3 rounded font-mono text-sm tracking-widest transition-colors',
+                  jobFile && !jobFileLoading
+                    ? 'bg-amber-400 text-[var(--ink)] hover:bg-amber-300'
+                    : 'bg-[var(--wire)] text-[var(--muted)] cursor-not-allowed'
+                )}
+              >
+                {jobFileLoading ? 'INGESTING...' : 'INGEST JOB DESCRIPTION'}
+              </button>
             </div>
 
             <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
@@ -426,6 +579,84 @@ export default function UploadPage() {
               {jobLoading ? 'SAVING...' : 'SAVE JOB DESCRIPTIONS'}
             </button>
           </div>
+        </div>
+
+        {/* Jobs List Section */}
+        <div className="mt-12">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-7 h-7 rounded-full border border-amber-400 flex items-center justify-center font-display text-amber-400">
+              C
+            </div>
+            <div>
+              <h2 className="font-display text-2xl text-[var(--snow)]">
+                UPLOADED JOB DESCRIPTIONS
+              </h2>
+              <p className="text-xs text-[var(--dim)] mt-1">
+                Manage your uploaded job descriptions.
+              </p>
+            </div>
+          </div>
+
+          {jobsLoading ? (
+            <div className="text-center py-8">
+              <p className="text-[var(--muted)] font-mono">Loading jobs...</p>
+            </div>
+          ) : jobs.length === 0 ? (
+            <div className="text-center py-8 border border-dashed border-[var(--edge)] rounded">
+              <p className="text-[var(--muted)] font-mono">No job descriptions uploaded yet.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {jobs.map((job) => (
+                <div
+                  key={job.jd_id}
+                  className="border border-[var(--edge)] rounded p-4 bg-[var(--panel)]"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <h3 className="font-display text-lg text-[var(--snow)] leading-tight">
+                      {job.title}
+                    </h3>
+                    <button
+                      onClick={() => handleDeleteJob(job.jd_id, job.title)}
+                      className="p-1 hover:bg-rose-400/10 rounded transition-colors ml-2 flex-shrink-0"
+                      title="Delete job"
+                    >
+                      <Trash2 size={16} className="text-rose-400" />
+                    </button>
+                  </div>
+
+                  {job.company && (
+                    <p className="text-sm text-[var(--light)] mb-2">
+                      {job.company}
+                    </p>
+                  )}
+
+                  {job.location && (
+                    <p className="text-xs text-[var(--muted)] mb-2">
+                      📍 {job.location}
+                    </p>
+                  )}
+
+                  {job.required_skills && (
+                    <div className="mb-2">
+                      <p className="text-xs text-[var(--dim)] font-mono tracking-wider mb-1">
+                        SKILLS
+                      </p>
+                      <p className="text-sm text-[var(--light)]">
+                        {job.required_skills}
+                      </p>
+                    </div>
+                  )}
+
+                  {job.created_at && (
+                    <p className="text-xs text-[var(--muted)] font-mono mt-3">
+                      Created: {new Date(job.created_at).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </main>

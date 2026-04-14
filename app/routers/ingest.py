@@ -1,8 +1,11 @@
 import uuid
 import io
 import json
+import re
 
 import openpyxl
+import docx
+import pdfplumber
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 
@@ -39,6 +42,86 @@ def _safe_float(value) -> float | None:
         return float(value) if value is not None else None
     except (ValueError, TypeError):
         return None
+
+
+def _extract_text_from_docx(contents: bytes) -> str:
+    document = docx.Document(io.BytesIO(contents))
+    return "\n".join([para.text for para in document.paragraphs if para.text.strip()])
+
+
+def _extract_text_from_pdf(contents: bytes) -> str:
+    text = []
+    with pdfplumber.open(io.BytesIO(contents)) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            text.append(page_text)
+    return "\n".join(text)
+
+
+def _extract_section(text: str, keywords: list[str]) -> str | None:
+    lower_text = text.lower()
+    for keyword in keywords:
+        idx = lower_text.find(keyword)
+        if idx != -1:
+            snippet = text[idx + len(keyword):].strip()
+            if snippet.startswith(':'):
+                snippet = snippet[1:].strip()
+            if not snippet:
+                continue
+            section = snippet.split('\n\n')[0].strip()
+            if section:
+                return section
+    return None
+
+
+def _parse_job_text(text: str) -> tuple[str, str, str | None, str | None]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    title = 'Job Description'
+
+    if lines:
+        first_line = lines[0]
+        title_match = re.match(
+            r'^(?:Job\s+Title|Position|Role|Opening|Vacancy|Job\s+Description|JD)\s*[:\-]\s*(.+)$',
+            first_line,
+            re.IGNORECASE,
+        )
+        title = title_match.group(1).strip() if title_match else first_line
+
+    overview = _extract_section(text, ['overview', 'job summary', 'about the role', 'job purpose', 'role summary'])
+    if not overview:
+        overview = "\n".join(lines[1:4]) if len(lines) > 1 else ''
+
+    required_skills = _extract_section(text, ['required skills', 'skills required', 'skill set', 'skills:', 'must have', 'preferred skills'])
+    core_requirements = _extract_section(text, ['core requirements', 'requirements', 'responsibilities', 'what you will do', 'job responsibilities'])
+
+    return title, overview, core_requirements, required_skills
+
+
+def _parse_multiple_jobs(text: str) -> list[tuple[str, str, str | None, str | None]]:
+    """
+    Parse text that may contain multiple job descriptions.
+    Splits only on explicit job-heading patterns to avoid false positives.
+    """
+    normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
+    title_marker = re.compile(
+        r'(?m)^(?:\d+\.|\*+\s*)?\s*(?:Job\s+Title|Position|Role|Opening|Vacancy|Job\s+Description|JD)\s*[:\-]',
+        re.IGNORECASE,
+    )
+
+    matches = list(title_marker.finditer(normalized_text))
+    if len(matches) < 2:
+        # if the file only has one job description or no explicit headings, parse as a single JD
+        return [_parse_job_text(normalized_text)]
+
+    job_starts = [m.start() for m in matches]
+    job_sections = []
+    for idx, start in enumerate(job_starts):
+        end = job_starts[idx + 1] if idx + 1 < len(job_starts) else len(normalized_text)
+        section = normalized_text[start:end].strip()
+        if section:
+            job_sections.append(section)
+
+    return [_parse_job_text(section) for section in job_sections] if job_sections else [_parse_job_text(normalized_text)]
 
 
 def _row_to_candidate(row: dict) -> Candidate:
@@ -116,6 +199,61 @@ def add_job(payload: JobDescriptionIn, db: Session = Depends(get_db)):
 
 
 @router.post(
+    "/jobs/upload-file",
+    response_model=UploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a Word or PDF job description file",
+)
+async def upload_job_description_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    if not file.filename.endswith((".docx", ".pdf")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .docx or .pdf files are accepted for job description upload.",
+        )
+    contents = await file.read()
+    if file.filename.lower().endswith('.docx'):
+        text = _extract_text_from_docx(contents)
+    else:
+        text = _extract_text_from_pdf(contents)
+
+    if not text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file did not contain any readable job description text.",
+        )
+
+    # Parse multiple jobs from the text
+    parsed_jobs = _parse_multiple_jobs(text)
+    
+    saved_ids = []
+    for title, overview, core_requirements, required_skills in parsed_jobs:
+        jd = JobDescription(
+            jd_id             = str(uuid.uuid4()),
+            title             = title,
+            company           = None,
+            overview          = overview,
+            core_requirements = core_requirements,
+            preferred_quals   = None,
+            responsibilities  = None,
+            required_skills   = required_skills,
+            employment_type   = None,
+            location          = None,
+        )
+        db.add(jd)
+        saved_ids.append(jd.jd_id)
+
+    db.commit()
+    return UploadResponse(
+        message=f"{len(saved_ids)} job description(s) ingested from {file.filename}.",
+        count=len(saved_ids),
+        ids=saved_ids,
+    )
+
+
+@router.post(
     "/jobs/bulk",
     response_model=UploadResponse,
     status_code=status.HTTP_201_CREATED,
@@ -158,6 +296,28 @@ def add_jobs_bulk(payload: BulkJDIn, db: Session = Depends(get_db)):
 )
 def list_jobs(db: Session = Depends(get_db)):
     return db.query(JobDescription).all()
+
+
+@router.delete(
+    "/jobs/{jd_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a job description by ID",
+)
+def delete_job(jd_id: str, db: Session = Depends(get_db)):
+    """
+    Delete a job description by its jd_id.
+    Returns 404 if the job doesn't exist.
+    """
+    jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
+    if not jd:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job description with id {jd_id} not found",
+        )
+    db.delete(jd)
+    db.commit()
+    return {"message": f"Job description {jd_id} deleted."}
+
 
 
 # ─── CANDIDATE endpoints ────────────────────────────────────────────────────────

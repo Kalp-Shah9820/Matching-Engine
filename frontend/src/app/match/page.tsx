@@ -107,6 +107,7 @@ function MatchPageContent() {
   const [jobs, setJobs] = useState<JobDescription[]>([]);
   const [selectedJd, setSelectedJd] = useState<string | null>(preselectedJd);
   const [results, setResults] = useState<MatchSummary[]>([]);
+  const [limit, setLimit] = useState(20);
   const [loading, setLoading] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
@@ -119,7 +120,19 @@ function MatchPageContent() {
       .catch(console.error);
   }, []);
 
-  // Load results when JD changes
+  // Auto-select first job when jobs are loaded
+  useEffect(() => {
+    if (!selectedJd && jobs.length > 0) {
+      setSelectedJd(jobs[0].jd_id);
+    }
+  }, [jobs, selectedJd]);
+
+  // Reset limit when a different JD is selected
+  useEffect(() => {
+    setLimit(20);
+  }, [selectedJd]);
+
+  // Load results when JD or limit changes
   useEffect(() => {
     if (!selectedJd) {
       setResults([]);
@@ -127,24 +140,54 @@ function MatchPageContent() {
     }
 
     setLoading(true);
-    getRankedCandidates(selectedJd)
+    getRankedCandidates(selectedJd, false, limit)
       .then(setResults)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [selectedJd]);
+  }, [selectedJd, limit]);
 
   const handleRunMatching = async () => {
     if (!selectedJd) return;
     setRunLoading(true);
     try {
       await triggerMatch(selectedJd);
-      const updated = await getRankedCandidates(selectedJd, true);
+      const updated = await getRankedCandidates(selectedJd, true, limit);
       setResults(updated);
     } catch (error) {
       console.error(error);
     } finally {
       setRunLoading(false);
     }
+  };
+
+  const handleDownloadCsv = () => {
+    const list = filteredResults.length ? filteredResults : results;
+    if (!list.length) return;
+
+    const header = ['Rank', 'Candidate ID', 'Name', 'Role', 'Location', 'Score', 'Explanation'];
+    const rows = list.map((item) => [
+      item.rank,
+      item.candidate_id,
+      item.name || '',
+      item.current_title || '',
+      item.location || '',
+      item.score_percent,
+      item.explanation.replace(/"/g, '""'),
+    ]);
+
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `match-results-${selectedJd || 'results'}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const selectedJob = jobs.find((j) => j.jd_id === selectedJd);
@@ -200,6 +243,19 @@ function MatchPageContent() {
             >
               <Zap size={16} />
               {runLoading ? 'RUNNING...' : 'RUN MATCHING'}
+            </button>
+
+            <button
+              onClick={handleDownloadCsv}
+              disabled={!selectedJd || results.length === 0}
+              className={clsx(
+                'px-4 py-2 rounded font-mono text-sm tracking-widest transition-colors',
+                selectedJd && results.length > 0
+                  ? 'bg-white/5 text-[var(--light)] border border-[var(--wire)] hover:bg-amber-400/10 hover:border-amber-400/40'
+                  : 'bg-[var(--wire)] text-[var(--muted)] cursor-not-allowed'
+              )}
+            >
+              Download CSV
             </button>
           </div>
         </div>
@@ -298,14 +354,27 @@ function MatchPageContent() {
 
             {/* Footer stats */}
             {filteredResults.length > 0 && (
-              <div className="flex justify-between items-center mt-6 px-2 font-mono text-[11px] text-[var(--dim)]">
-                <span>
-                  {searchFilter
-                    ? `${filteredResults.length} matching candidate(s)`
-                    : `${filteredResults.length} candidate(s) shown`}
-                </span>
-                <span>{results.length} total ranked</span>
-              </div>
+              <>
+                <div className="flex flex-col md:flex-row md:justify-between gap-3 mt-6 px-2 font-mono text-[11px] text-[var(--dim)]">
+                  <span>
+                    {searchFilter
+                      ? `${filteredResults.length} matching candidate(s)`
+                      : `Showing ${results.length} candidate(s)`}
+                  </span>
+                  <span>{limit} candidate(s) requested</span>
+                </div>
+
+                {results.length === limit && (
+                  <div className="mt-4 flex justify-center">
+                    <button
+                      onClick={() => setLimit((prev) => prev + 20)}
+                      className="px-4 py-2 rounded bg-amber-400 text-[var(--ink)] font-mono text-sm tracking-widest hover:bg-amber-300 transition-colors"
+                    >
+                      Load next 20
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

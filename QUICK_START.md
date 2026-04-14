@@ -294,21 +294,10 @@ docker compose up --build -d  # Restart
 
 ## 📚 Next Steps
 
-1. **Read the full docs:**
+**Read the full docs:**
    - [FRONTEND_QUICK_START.md](FRONTEND_QUICK_START.md) - Frontend-specific setup
    - [FRONTEND_COMPLETE.md](FRONTEND_COMPLETE.md) - Components, styling, API integration
-   - [PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md) - Backend architecture
 
-2. **Deploy to production:**
-   - Frontend: Vercel, Netlify, or AWS S3
-   - Backend: Heroku, Railway, or AWS EC2
-   - Database: PostgreSQL (switch from SQLite)
-
-3. **Add features:**
-   - Authentication (JWT/OAuth2)
-   - Email notifications
-   - Analytics dashboard
-   - Mobile app
 
 4. **Performance:**
    - Redis caching for results

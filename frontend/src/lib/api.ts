@@ -1,6 +1,6 @@
 import { JobDescription, MatchSummary, MatchDetail, UploadResponse } from '@/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 async function request<T>(
   endpoint: string,
@@ -20,8 +20,13 @@ async function request<T>(
     throw new Error(error.detail || `API error: ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as unknown as T;
+  }
+
   return response.json();
 }
+
 
 export async function uploadCandidatesExcel(file: File): Promise<UploadResponse> {
   const formData = new FormData();
@@ -29,6 +34,19 @@ export async function uploadCandidatesExcel(file: File): Promise<UploadResponse>
   
   return request<UploadResponse>(
     '/ingest/candidates/upload-excel',
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
+}
+
+export async function uploadJobDescriptionFile(file: File): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return request<UploadResponse>(
+    '/ingest/jobs/upload-file',
     {
       method: 'POST',
       body: formData,
@@ -66,6 +84,13 @@ export async function listJobs(): Promise<JobDescription[]> {
     method: 'GET',
   });
 }
+
+export async function deleteJob(jdId: string): Promise<void> {
+  return request<void>(`/ingest/jobs/${jdId}`, {
+    method: 'DELETE',
+  });
+}
+
 
 export async function getRankedCandidates(
   jdId: string,

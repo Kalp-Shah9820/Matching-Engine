@@ -264,7 +264,7 @@ curl http://localhost:8000/match/550e8400-e29b-41d4-a716-446655440000/cand-001
 | **FRONTEND_COMPLETE.md** | Architecture, components, features | 15 min |
 | **frontend/SETUP.md** | Dev environment guide | 10 min |
 | **PROJECT_ANALYSIS.md** | Complete backend architecture | 20 min |
-| **SYSTEM_FLOW_DIAGRAMS.md** | Data flow & performance diagrams | 10 min |
+
 
 ---
 
@@ -337,13 +337,6 @@ curl http://localhost:8000/match/550e8400-e29b-41d4-a716-446655440000/cand-001
 2. Backend: AWS EC2, Heroku, DigitalOcean, Railway
 3. Database: PostgreSQL on RDS, Supabase, or self-hosted
 4. Scaling: Redis for caching, load balancing, CDN for assets
-
-**Enhancements:**
-- Add authentication (JWT, OAuth2)
-- Add email notifications
-- Implement batch processing (100k+ candidates)
-- Add analytics dashboard
-- Build mobile app
 
 ---
 

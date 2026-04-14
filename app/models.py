@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
+import datetime
 
 # ─── INPUT MODELS (what the API accepts) ───────────────────────────────────────
 
@@ -94,7 +95,7 @@ class JobDescriptionOut(BaseModel):
     required_skills: Optional[str]
     location: Optional[str]
     employment_type: Optional[str]
-    created_at: Optional[str]
+    created_at: Optional[datetime.datetime]
 
     class Config:
         from_attributes = True
